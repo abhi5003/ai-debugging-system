@@ -10,6 +10,9 @@ ServiceNow → Spring Boot Webhook → Validate → Enrich (Dynatrace) → Kafka
 → Kafka incident-analysis → ServiceNow Writeback + Learning Pipeline (pgvector)
 ```
 
+<img width="1440" height="1986" alt="image" src="https://github.com/user-attachments/assets/7a4bb52c-151e-483e-bfe4-5d457b9b778a" />
+
+
 ## Services
 
 | Service | Tech | Port |
