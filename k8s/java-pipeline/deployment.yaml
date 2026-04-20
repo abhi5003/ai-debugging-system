@@ -1,0 +1,126 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-pipeline
+  namespace: ai-debugging
+  labels:
+    app: java-pipeline
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: java-pipeline
+  template:
+    metadata:
+      labels:
+        app: java-pipeline
+    spec:
+      containers:
+        - name: java-pipeline
+          image: ai-debugging/java-pipeline:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: KAFKA_BROKERS
+              value: kafka:9092
+            - name: REDIS_HOST
+              value: redis
+            - name: DATABASE_URL
+              value: jdbc:postgresql://postgres:5432/incidents
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+            - name: RAG_SERVICE_URL
+              value: http://rag-service:8000
+            - name: WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: api-keys
+                  key: webhook-secret
+            - name: DT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dynatrace-secret
+                  key: api-token
+            - name: DT_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dynatrace-secret
+                  key: base-url
+            - name: SERVICENOW_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: servicenow-secret
+                  key: base-url
+            - name: SERVICENOW_USER
+              valueFrom:
+                secretKeyRef:
+                  name: servicenow-secret
+                  key: username
+            - name: SERVICENOW_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: servicenow-secret
+                  key: password
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 45
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: java-pipeline
+  namespace: ai-debugging
+spec:
+  selector:
+    app: java-pipeline
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: java-pipeline-ingress
+  namespace: ai-debugging
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: ai-debugging.yourdomain.com
+      http:
+        paths:
+          - path: /webhook
+            pathType: Prefix
+            backend:
+              service:
+                name: java-pipeline
+                port:
+                  number: 8080

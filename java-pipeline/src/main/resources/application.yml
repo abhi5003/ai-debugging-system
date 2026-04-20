@@ -1,0 +1,79 @@
+spring:
+  application:
+    name: java-pipeline
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+        delivery.timeout.ms: 30000
+    consumer:
+      group-id: processor-service
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 10
+    listener:
+      ack-mode: MANUAL_IMMEDIATE
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/incidents}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+kafka:
+  topics:
+    incident-events: incident-events
+    incident-events-dlt: incident-events.DLT
+    incident-analysis: incident-analysis
+    incident-analysis-dlt: incident-analysis.DLT
+
+webhook:
+  secret: ${WEBHOOK_SECRET:dev-secret}
+
+dynatrace:
+  base-url: ${DT_BASE_URL:https://dummy.live.dynatrace.com}
+  api-token: ${DT_API_TOKEN:dummy}
+  timeout-seconds: 5
+
+servicenow:
+  base-url: ${SERVICENOW_BASE_URL:https://dummy.service-now.com}
+  username: ${SERVICENOW_USER:admin}
+  password: ${SERVICENOW_PASSWORD:password}
+
+rag:
+  service:
+    url: ${RAG_SERVICE_URL:http://localhost:8000}
+
+processor:
+  dedup-ttl-minutes: 10
+  score:
+    critical-threshold: 80
+    high-threshold: 50

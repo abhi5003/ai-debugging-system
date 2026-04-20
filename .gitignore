@@ -1,0 +1,36 @@
+# Java
+target/
+*.class
+*.jar
+*.war
+.mvn/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Env files
+.env
+!.env.example
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Docker
+.docker/
+
+# Secrets
+k8s/infra/secrets.yaml
+
+# OS
+.DS_Store
+Thumbs.db
