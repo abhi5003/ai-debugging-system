@@ -1,7 +1,7 @@
 import logging
 from langchain_openai import OpenAIEmbeddings
 from graph.state import AgentState
-from mcp.vector_search import vector_search
+from mcp.client import MCPClient
 from config import settings
 
 log = logging.getLogger(__name__)
@@ -10,6 +10,8 @@ _embeddings = OpenAIEmbeddings(
     model=settings.embedding_model,
     api_key=settings.openai_api_key
 )
+
+mcp_client = MCPClient()
 
 
 def _build_embedding_text(state: AgentState) -> str:
@@ -50,11 +52,15 @@ async def retrieval_agent(state: AgentState) -> dict:
 
     text      = _build_embedding_text(state)
     embedding = await _embeddings.aembed_query(text)
-    similar   = await vector_search(
-        query_embedding=embedding,
-        top_k=top_k,
-        min_similarity=min_similarity
-    )
+    try:
+        similar = await mcp_client.vector_search(
+            query_embedding=embedding,
+            top_k=top_k,
+            min_similarity=min_similarity
+        )
+    except Exception as e:
+        log.exception("MCP failed: %s", e)
+        similar = []   # fallback
 
     log.info("[retrieval] attempt=%d top_k=%d min_sim=%.2f found=%d",
              attempts + 1, top_k, min_similarity, len(similar))
