@@ -34,3 +34,6 @@ k8s/infra/secrets.yaml
 # OS
 .DS_Store
 Thumbs.db
+
+# claude
+.claude/
