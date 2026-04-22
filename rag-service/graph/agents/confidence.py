@@ -27,12 +27,12 @@ Respond ONLY with valid JSON:
 
 
 async def confidence_agent(state: AgentState) -> dict:
-    inc      = state["incident"]
-    similar  = state["similar_incidents"]
+    inc = state["incident"]
+    similar = state["similar_incidents"]
     attempts = state["retrieval_attempts"]
 
-    error_rate   = inc.metrics.error_rate_percent if inc.metrics else 0.0
-    open_probs   = len(inc.traces.recent_problem_ids) if inc.traces else 0
+    error_rate = inc.metrics.error_rate_percent if inc.metrics else 0.0
+    open_probs = len(inc.traces.recent_problem_ids) if inc.traces else 0
 
     prompt = f"""ROOT CAUSE:    {state['root_cause']}
 RESOLUTION:    {state['resolution']}
@@ -60,7 +60,28 @@ Score the confidence of this analysis."""
         data = {"confidence": 0.5, "reason": "parse error"}
 
     confidence = float(data.get("confidence", 0.5))
-    reason     = data.get("reason", "")
+    reason = data.get("reason", "")
+
+    # ✅ SIGNAL-BASED CALIBRATION
+    similar_count = len(similar)
+
+    adjustment = 0.0
+
+    # Boost if we have strong historical match
+    if similar_count >= 3:
+        adjustment += 0.10
+
+    # Penalize if no similar incidents
+    if similar_count == 0:
+        adjustment -= 0.15
+
+    # Boost if strong runtime signal
+    if error_rate > 20:
+        adjustment += 0.05
+
+    # Apply and clamp
+    confidence = max(0.0, min(1.0, confidence + adjustment))
+
     needs_more = (
         confidence < settings.confidence_threshold
         and attempts < settings.max_retrieval_attempts

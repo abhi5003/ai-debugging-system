@@ -58,6 +58,11 @@ async def analyze(incident: EnrichedIncident) -> IncidentAnalysis:
             "confidence":         0.0,
             "needs_reretrieval":  False,
             "reasoning_trace":    [],
+            "deep_analysis_done": False,
+            "web_search_done":    False,
+            "web_results":        [],
+            "loop_count":         0,
+            "max_loops":          3,
         }
 
         final = await rag_graph.ainvoke(initial)

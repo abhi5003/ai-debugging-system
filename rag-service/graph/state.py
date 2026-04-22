@@ -23,5 +23,14 @@ class AgentState(TypedDict):
     confidence:           float
     needs_reretrieval:    bool
 
+    # ── deep analysis agent ─────────────────────────────────────────
+    deep_analysis_done: bool
+    web_search_done: bool
+    web_results: list[dict]
+
+    # ── loop counter ─────────────────────────────────────────
+    loop_count: int
+    max_loops: int
+
     # ── shared append-only trace ───────────────────────────────────
     reasoning_trace: Annotated[list[str], add_messages]

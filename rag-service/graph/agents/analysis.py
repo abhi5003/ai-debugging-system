@@ -72,7 +72,13 @@ def _build_prompt(state: AgentState) -> str:
                 f"    Description: {s['description']}",
                 f"    Root cause:  {s['root_cause']}",
                 "",
+    
             ]
+    
+    if state.get("web_results"):
+        lines += ["", "=== WEB SEARCH RESULTS ==="]
+        for r in state["web_results"]:
+            lines.append(f"- {r.get('title')}")
     else:
         lines.append("None found — analyze from observability signals only.")
 

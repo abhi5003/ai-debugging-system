@@ -3,6 +3,7 @@ from mcp.server import stdio_server
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 from mcp.vector_search import vector_search
+from mcp.web_search import web_search
 import json
 
 app = Server("incident-rag-tools")
@@ -23,6 +24,19 @@ async def list_tools():
                 "required": ["query_embedding"]
             }
         )
+
+        Tool(
+            name="web_search",
+            description="Search web for incident fixes",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"}
+                },
+                "required": ["query"]
+            }
+        )
+
     ]
 
 @app.call_tool()
@@ -35,7 +49,11 @@ async def call_tool(name: str, arguments: dict):
         results = await vector_search(**arguments)
         print(f"📤 Returning {len(results)} results", flush=True)
         return [TextContent(type="text", text=json.dumps(results, default=str))]
-
+    if name == "web_search":
+        results = await web_search(**arguments)
+        print(f"📤 Returning {len(results)} results", flush=True)
+        return [TextContent(type="text", text=json.dumps(results, default=str))]
+    
     raise ValueError(f"Unknown tool: {name}")
 
 async def main():

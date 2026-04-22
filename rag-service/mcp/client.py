@@ -37,3 +37,20 @@ class MCPClient:
         print("📥 MCP response received", flush=True)
 
         return json.loads(result[0].text)
+    
+    async def web_search(self, query):
+        await self.connect()
+
+        print("📡 Calling MCP web_search...", flush=True)
+
+        result = await asyncio.wait_for(
+        self.client.call_tool(
+            "web_search",
+            {
+                "query": query
+            }
+        ), timeout=10)
+
+        print("📥 MCP response received", flush=True)
+
+        return json.loads(result[0].text)
