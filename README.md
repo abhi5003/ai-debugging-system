@@ -5,9 +5,32 @@ End-to-end pipeline that automatically analyzes IT incidents using Agentic RAG.
 ## Architecture
 
 ```
-ServiceNow → Spring Boot Webhook → Validate → Enrich (Dynatrace) → Kafka
-→ Processor Service → Python RAG Service (FastAPI + LangGraph + Claude)
-→ Kafka incident-analysis → ServiceNow Writeback + Learning Pipeline (pgvector)
+ServiceNow
+   ↓
+Webhook → Validation → Enrichment (Dynatrace)
+   ↓
+Kafka (incident-events)
+   ↓
+Processor Service
+   ↓
+RAG Service (LangGraph)
+
+   retrieval → analysis → resolution → confidence
+                     ↓
+                (decision)
+         ┌──────────┼───────────┬──────────┐
+         │          │           │          │
+      retry   deep_analysis   web_search   END
+         │          │           │
+         ↓          ↓           ↓
+     retrieval   resolution   analysis
+                    ↓           ↓
+                 confidence → confidence
+
+   ↓
+Kafka (incident-analysis)
+   ↓
+ServiceNow + Learning (pgvector)
 ```
 
 <img width="1440" height="1986" alt="image" src="https://github.com/user-attachments/assets/7a4bb52c-151e-483e-bfe4-5d457b9b778a" />
