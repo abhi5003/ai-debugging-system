@@ -45,6 +45,11 @@ spec:
                 secretKeyRef:
                   name: api-keys
                   key: openai-api-key
+            - name: TAVILY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: api-keys
+                  key: tavily-api-key
             - name: CONFIDENCE_THRESHOLD
               value: "0.70"
             - name: MAX_RETRIEVAL_ATTEMPTS

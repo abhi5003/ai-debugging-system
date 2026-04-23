@@ -1,8 +1,9 @@
-from graph.state import AgentState
-from mcp.client import MCPClient
+from app.graph.state import AgentState
+from app.mcp.client import MCPClient
 import asyncio
 
 mcp = MCPClient()
+
 
 def filter_results(results, incident_text):
     filtered = []
@@ -17,7 +18,6 @@ def filter_results(results, incident_text):
             filtered.append(r)
 
     return filtered[:3]  # keep top 3 only
-
 
 
 async def web_search_agent(state: AgentState) -> dict:

@@ -1,8 +1,8 @@
 import logging
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
-from graph.state import AgentState
-from config import settings
+from app.graph.state import AgentState
+from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ Respond with only the root cause in one or two sentences. No JSON. No preamble."
 
 
 def _build_prompt(state: AgentState) -> str:
-    inc     = state["incident"]
+    inc = state["incident"]
     similar = state["similar_incidents"]
 
     lines = [
@@ -72,13 +72,15 @@ def _build_prompt(state: AgentState) -> str:
                 f"    Description: {s['description']}",
                 f"    Root cause:  {s['root_cause']}",
                 "",
-    
+
             ]
-    
+
     if state.get("web_results"):
         lines += ["", "=== WEB SEARCH RESULTS ==="]
         for r in state["web_results"]:
             lines.append(f"- {r.get('title')}")
+            if r.get("content"):
+                lines.append(f"  {r.get('content')[:150]}")
     else:
         lines.append("None found — analyze from observability signals only.")
 
@@ -87,7 +89,7 @@ def _build_prompt(state: AgentState) -> str:
 
 
 async def analysis_agent(state: AgentState) -> dict:
-    prompt   = _build_prompt(state)
+    prompt = _build_prompt(state)
     response = await _llm.ainvoke([
         SystemMessage(content=_SYSTEM),
         HumanMessage(content=prompt),

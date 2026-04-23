@@ -1,6 +1,6 @@
 import asyncpg
 import logging
-from config import settings
+from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,8 @@ async def vector_search(
     try:
         conn = await asyncpg.connect(settings.database_url)
         try:
-            vec_str = "[" + ",".join(str(float(v)) for v in query_embedding) + "]"
+            vec_str = "[" + ",".join(str(float(v))
+                                     for v in query_embedding) + "]"
 
             rows = await conn.fetch("""
                 SELECT

@@ -1,7 +1,7 @@
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
-from graph.state import AgentState
-from config import settings
+from app.graph.state import AgentState
+from app.config import settings
 
 _llm = ChatAnthropic(
     model=settings.llm_model,
@@ -22,6 +22,7 @@ You must:
 Avoid repeating previous reasoning.
 Be precise and technical.
 """
+
 
 async def deep_analysis_agent(state: AgentState) -> dict:
     inc = state["incident"]

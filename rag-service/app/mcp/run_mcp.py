@@ -1,12 +1,13 @@
 import asyncio
-from mcp.server import stdio_server
-from mcp.server import Server
-from mcp.types import Tool, TextContent
-from mcp.vector_search import vector_search
-from mcp.web_search import web_search
+from app.mcp.server import stdio_server
+from app.mcp.server import Server
+from app.mcp.types import Tool, TextContent
+from app.mcp.vector_search import vector_search
+from app.mcp.web_search import web_search
 import json
 
 app = Server("incident-rag-tools")
+
 
 @app.list_tools()
 async def list_tools():
@@ -23,11 +24,11 @@ async def list_tools():
                 },
                 "required": ["query_embedding"]
             }
-        )
+        ),
 
         Tool(
             name="web_search",
-            description="Search web for incident fixes",
+            description="Search web using Tavily for incident troubleshooting",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -38,6 +39,7 @@ async def list_tools():
         )
 
     ]
+
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict):
@@ -53,8 +55,9 @@ async def call_tool(name: str, arguments: dict):
         results = await web_search(**arguments)
         print(f"📤 Returning {len(results)} results", flush=True)
         return [TextContent(type="text", text=json.dumps(results, default=str))]
-    
+
     raise ValueError(f"Unknown tool: {name}")
+
 
 async def main():
     async with stdio_server() as (read, write):

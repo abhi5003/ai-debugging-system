@@ -1,6 +1,6 @@
 from typing import TypedDict, Annotated
 from langgraph.graph.message import add_messages
-from models.incident import EnrichedIncident
+from app.models.incident import EnrichedIncident
 
 
 class AgentState(TypedDict):

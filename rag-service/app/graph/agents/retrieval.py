@@ -1,8 +1,8 @@
 import logging
 from langchain_openai import OpenAIEmbeddings
-from graph.state import AgentState
-from mcp.client import MCPClient
-from config import settings
+from app.graph.state import AgentState
+from app.mcp.client import MCPClient
+from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +35,8 @@ def _build_embedding_text(state: AgentState) -> str:
             )
     if inc.topology:
         if inc.topology.upstream_services:
-            parts.append(f"upstream: {', '.join(inc.topology.upstream_services)}")
+            parts.append(
+                f"upstream: {', '.join(inc.topology.upstream_services)}")
         if inc.topology.downstream_services:
             parts.append(
                 f"downstream: {', '.join(inc.topology.downstream_services)}"
@@ -47,10 +48,10 @@ async def retrieval_agent(state: AgentState) -> dict:
     attempts = state.get("retrieval_attempts", 0)
 
     # Widen search on each retry attempt
-    top_k          = 5 + (attempts * 5)
+    top_k = 5 + (attempts * 5)
     min_similarity = max(0.60, 0.75 - (attempts * 0.05))
 
-    text      = _build_embedding_text(state)
+    text = _build_embedding_text(state)
     embedding = await _embeddings.aembed_query(text)
     try:
         similar = await mcp_client.vector_search(

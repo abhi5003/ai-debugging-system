@@ -6,6 +6,7 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MCP_PATH = os.path.join(BASE_DIR, "run_mcp.py")
 
+
 class MCPClient:
     def __init__(self):
         self.client = None
@@ -25,31 +26,31 @@ class MCPClient:
         print("📡 Calling MCP vector_search...", flush=True)
 
         result = await asyncio.wait_for(
-        self.client.call_tool(
-            "vector_search",
-            {
-                "query_embedding": embedding,
-                "top_k": top_k,
-                "min_similarity": min_similarity
-            }
-        ), timeout=10)
+            self.client.call_tool(
+                "vector_search",
+                {
+                    "query_embedding": embedding,
+                    "top_k": top_k,
+                    "min_similarity": min_similarity
+                }
+            ), timeout=10)
 
         print("📥 MCP response received", flush=True)
 
         return json.loads(result[0].text)
-    
-    async def web_search(self, query):
+
+    async def web_search(self, query: str):
         await self.connect()
 
         print("📡 Calling MCP web_search...", flush=True)
 
         result = await asyncio.wait_for(
-        self.client.call_tool(
-            "web_search",
-            {
-                "query": query
-            }
-        ), timeout=10)
+            self.client.call_tool(
+                "web_search",
+                {
+                    "query": query
+                }
+            ), timeout=10)
 
         print("📥 MCP response received", flush=True)
 

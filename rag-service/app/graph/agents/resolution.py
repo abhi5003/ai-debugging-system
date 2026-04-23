@@ -2,8 +2,8 @@ import json
 import logging
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
-from graph.state import AgentState
-from config import settings
+from app.graph.state import AgentState
+from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -25,9 +25,9 @@ Respond ONLY with valid JSON — no preamble, no markdown fences:
 
 
 async def resolution_agent(state: AgentState) -> dict:
-    inc        = state["incident"]
+    inc = state["incident"]
     root_cause = state["root_cause"]
-    similar    = state["similar_incidents"]
+    similar = state["similar_incidents"]
 
     past = "\n".join([
         f"- {s['number']}: {s.get('resolution', 'no resolution recorded')}"
@@ -59,7 +59,7 @@ Generate the resolution plan and immediate actions."""
         HumanMessage(content=prompt),
     ])
 
-    raw  = response.content.strip().replace("```json", "").replace("```", "").strip()
+    raw = response.content.strip().replace("```json", "").replace("```", "").strip()
 
     try:
         data = json.loads(raw)
