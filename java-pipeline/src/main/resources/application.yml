@@ -54,6 +54,8 @@ kafka:
     incident-events-dlt: incident-events.DLT
     incident-analysis: incident-analysis
     incident-analysis-dlt: incident-analysis.DLT
+    incident-analysis: incident-analysis
+    incident-feedback: incident-feedback
 
 webhook:
   secret: ${WEBHOOK_SECRET:dev-secret}

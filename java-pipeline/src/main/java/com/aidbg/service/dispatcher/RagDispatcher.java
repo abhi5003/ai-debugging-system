@@ -53,7 +53,7 @@ public class RagDispatcher {
     private void callRag(EnrichedIncident incident) {
         try {
             log.info("POST /analyze → rag-service  incident={}", incident.getNumber());
-
+    
             IncidentAnalysis analysis = ragServiceClient.post()
                 .uri("/analyze")
                 .bodyValue(incident)
@@ -61,23 +61,25 @@ public class RagDispatcher {
                 .bodyToMono(IncidentAnalysis.class)
                 .timeout(Duration.ofSeconds(60))
                 .block();
-
+    
             if (analysis == null) {
                 log.error("RAG returned null for {}", incident.getNumber());
                 return;
             }
-
+    
             log.info("RAG responded for {} confidence={}",
                 incident.getNumber(), analysis.getConfidence());
-
-            // Publish to Kafka incident-analysis topic
+    
+            // ✅ NEW: Mark as AI suggestion (VERY IMPORTANT)
+            analysis.setStatus("PENDING_APPROVAL");
+            analysis.setSource("AI");
+    
+            // ✅ Publish to Kafka (this will go to ServiceNow as suggestion)
             analysisProducer.publish(analysis);
-
-            // Feed learning pipeline if confidence is high enough
-            if (analysis.getConfidence() >= 0.70) {
-                learningService.store(analysis);
-            }
-
+    
+            // ❌ REMOVE THIS COMPLETELY
+            // learningService.store(analysis);
+    
         } catch (WebClientResponseException e) {
             log.error("RAG HTTP {} for {}: {}",
                 e.getStatusCode(), incident.getNumber(), e.getResponseBodyAsString());
@@ -86,6 +88,7 @@ public class RagDispatcher {
         }
     }
 
+    
     @Scheduled(fixedDelay = 120_000)
     public void drainLowSeverityQueue() {
         List<EnrichedIncident> batch = new ArrayList<>();

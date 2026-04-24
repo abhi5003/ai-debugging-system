@@ -2,7 +2,7 @@ package com.aidbg.listener;
 
 import com.aidbg.model.IncidentAnalysis;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
+
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -43,23 +43,36 @@ public class ServiceNowWritebackListener {
     )
     public void onAnalysis(ConsumerRecord<String, byte[]> record, Acknowledgment ack) {
         String sysId = record.key();
-        log.info("Writeback received sysId={}", sysId);
-
+    
         try {
             IncidentAnalysis analysis =
                 objectMapper.readValue(record.value(), IncidentAnalysis.class);
-
-            // Skip low-confidence — don't pollute ServiceNow
-            if (analysis.getConfidence() < 0.50) {
-                log.warn("Skipping writeback for {} — confidence {} too low",
-                    analysis.getNumber(), analysis.getConfidence());
-                ack.acknowledge();
-                return;
+    
+            // ✅ Defensive defaults
+            if (analysis.getStatus() == null) {
+                analysis.setStatus("PENDING_APPROVAL");
             }
-
+    
+            if (analysis.getSource() == null) {
+                analysis.setSource("AI");
+            }
+    
+            Double confidence = analysis.getConfidence();
+            if (confidence == null || Double.isNaN(confidence)) {
+                analysis.setConfidence(0.0);
+            }
+    
+            log.info("Writeback received sysId={} incident={} confidence={} status={}",
+                sysId,
+                analysis.getNumber(),
+                analysis.getConfidence(),
+                analysis.getStatus()
+            );
+    
             updateServiceNow(sysId, analysis);
+    
             ack.acknowledge();
-
+    
         } catch (Exception e) {
             log.error("Writeback failed sysId={}: {}", sysId, e.getMessage());
             // No ack → retry
@@ -67,47 +80,55 @@ public class ServiceNowWritebackListener {
     }
 
     private void updateServiceNow(String sysId, IncidentAnalysis analysis) {
+
         List<String> actions = analysis.getImmediateActions() != null
             ? analysis.getImmediateActions() : List.of();
-
+    
         String actionsList = IntStream.range(0, actions.size())
             .mapToObj(i -> (i + 1) + ". " + actions.get(i))
             .collect(Collectors.joining("\n"));
-
+    
         String workNote = String.format(
-            "[AI Analysis — confidence %.0f%%]\n\nRoot cause:\n%s\n\nImmediate actions:\n%s\n\nSimilar incidents: %s",
-            analysis.getConfidence() * 100,
-            analysis.getRootCause(),
+            "🤖 AI Suggested Analysis (Needs Review)\n\n" +
+            "Confidence: %.0f%%\n\n" +
+            "Root Cause:\n%s\n\n" +
+            "Resolution:\n%s\n\n" +
+            "Immediate Actions:\n%s\n\n" +
+            "Similar Incidents: %s\n\n" +
+            "⚠ Please ACCEPT or REJECT this suggestion.",
+            safePercent(analysis.getConfidence()),
+            safe(analysis.getRootCause()),
+            safe(analysis.getResolution()),
             actionsList,
             analysis.getSimilarIncidentNumbers() != null
                 ? String.join(", ", analysis.getSimilarIncidentNumbers()) : "none"
         );
-
+    
         Map<String, Object> body = Map.of(
             "work_notes",       workNote,
-            "u_ai_root_cause",  analysis.getRootCause(),
-            "u_ai_resolution",  analysis.getResolution(),
-            "u_ai_confidence",  String.valueOf(analysis.getConfidence())
+            "u_ai_root_cause",  safe(analysis.getRootCause()),
+            "u_ai_resolution",  safe(analysis.getResolution()),
+            "u_ai_confidence",  analysis.getConfidence(),
+            "u_ai_status",      "PENDING_APPROVAL"
         );
+    
+        serviceNowClient.patch()
+            .uri("/api/now/table/incident/" + sysId)
+            .bodyValue(body)
+            .retrieve()
+            .toBodilessEntity()
+            .timeout(Duration.ofSeconds(15))
+            .block();
+    
+        log.info("ServiceNow updated for {} ({}) with AI suggestion",
+            analysis.getNumber(), sysId);
+    }
 
-        try {
-            serviceNowClient.patch()
-                .uri("/api/now/table/incident/" + sysId)
-                .bodyValue(body)
-                .retrieve()
-                .toBodilessEntity()
-                .timeout(Duration.ofSeconds(15))
-                .block();
-
-            log.info("ServiceNow updated for {} ({})", analysis.getNumber(), sysId);
-
-        } catch (WebClientResponseException e) {
-            log.error("ServiceNow PATCH failed {} — HTTP {}: {}",
-                sysId, e.getStatusCode(), e.getResponseBodyAsString());
-            // In real env with real SN, re-throw to trigger retry
-            // In dev with dummy URL, swallow it
-        } catch (Exception e) {
-            log.warn("ServiceNow update skipped (likely dev mode): {}", e.getMessage());
-        }
+    private String safe(String val) {
+        return val != null ? val : "N/A";
+    }
+    
+    private double safePercent(Double val) {
+        return val != null ? val * 100 : 0.0;
     }
 }

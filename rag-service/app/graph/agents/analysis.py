@@ -12,13 +12,31 @@ _llm = ChatAnthropic(
     max_tokens=1024,
 )
 
+# 🔥 UPDATED SYSTEM PROMPT
 _SYSTEM = """You are a senior SRE performing incident root cause analysis.
-You receive a current incident with live observability data already collected
-(Dynatrace metrics, traces, topology) plus similar past resolved incidents.
 
-Identify the single most likely ROOT CAUSE. Be specific — name the
-component, the failure mode, and which signal confirms it.
-Respond with only the root cause in one or two sentences. No JSON. No preamble."""
+You receive:
+1. A current incident with live observability data (metrics, traces, topology)
+2. Similar past incidents (some HUMAN-verified, some AI-generated)
+
+STRICT RULES:
+- Always prioritize HUMAN-verified incidents over AI-generated ones
+- Use AI-generated incidents only if HUMAN data is insufficient
+- Higher confidence incidents are more reliable
+- Observability signals (metrics, traces, topology) must be the primary evidence
+- Do NOT blindly copy past incidents — validate against current signals
+
+Your task:
+Identify the single most likely ROOT CAUSE.
+
+Be precise:
+- Name the component
+- Describe the failure mode
+- Mention the key signal confirming it
+
+Respond with only the root cause in 1–2 sentences.
+No JSON. No explanation. No preamble.
+"""
 
 
 def _build_prompt(state: AgentState) -> str:
@@ -38,7 +56,7 @@ def _build_prompt(state: AgentState) -> str:
     if inc.metrics:
         lines += [
             "",
-            "── Dynatrace metrics (from Java enrichment) ──",
+            "── Dynatrace metrics ──",
             f"CPU usage:     {inc.metrics.cpu_usage_percent:.1f}%",
             f"Memory usage:  {inc.metrics.memory_usage_percent:.1f}%",
             f"Error rate:    {inc.metrics.error_rate_percent:.1f}%",
@@ -48,7 +66,7 @@ def _build_prompt(state: AgentState) -> str:
     if inc.traces:
         lines += [
             "",
-            "── Dynatrace traces (from Java enrichment) ──",
+            "── Dynatrace traces ──",
             f"Open problems: {inc.traces.recent_problem_ids or 'none'}",
             f"Error count:   {inc.traces.error_count}",
             f"Slow spans:    {inc.traces.slow_span_operations or 'none'}",
@@ -57,24 +75,32 @@ def _build_prompt(state: AgentState) -> str:
     if inc.topology:
         lines += [
             "",
-            "── Topology (from Java enrichment) ──",
+            "── Topology ──",
             f"Upstream:   {inc.topology.upstream_services or 'none'}",
             f"Downstream: {inc.topology.downstream_services or 'none'}",
             f"Host group: {inc.topology.host_group or 'N/A'}",
         ]
 
+    # 🔥 UPDATED SIMILAR INCIDENTS BLOCK
     lines += ["", "=== SIMILAR RESOLVED INCIDENTS ==="]
+
     if similar:
         for i, s in enumerate(similar, 1):
             sim_pct = float(s.get("similarity", 0)) * 100
+            source = s.get("source", "AI")
+            confidence = s.get("confidence", 0.0)
+
             lines += [
-                f"[{i}] {s['number']}  (similarity {sim_pct:.0f}%)",
-                f"    Description: {s['description']}",
-                f"    Root cause:  {s['root_cause']}",
+                f"[{i}] {s['number']} (similarity {sim_pct:.0f}%)",
+                f"    Source: {source} (confidence={confidence:.2f})",
+                f"    Root cause: {s.get('root_cause')}",
+                f"    Resolution: {s.get('resolution')}",
                 "",
-
             ]
+    else:
+        lines.append("No similar incidents found.")
 
+    # Web results (optional)
     if state.get("web_results"):
         lines += ["", "=== WEB SEARCH RESULTS ==="]
         for r in state["web_results"]:
@@ -82,22 +108,26 @@ def _build_prompt(state: AgentState) -> str:
             if r.get("content"):
                 lines.append(f"  {r.get('content')[:150]}")
     else:
-        lines.append("None found — analyze from observability signals only.")
+        lines.append("")
 
     lines += ["", "What is the root cause of this incident?"]
+
     return "\n".join(lines)
 
 
 async def analysis_agent(state: AgentState) -> dict:
     prompt = _build_prompt(state)
+
     response = await _llm.ainvoke([
         SystemMessage(content=_SYSTEM),
         HumanMessage(content=prompt),
     ])
+
     root_cause = response.content.strip()
-    log.info("[analysis] root_cause=%s", root_cause[:80])
+
+    log.info("[analysis] root_cause=%s", root_cause[:120])
 
     return {
-        "root_cause":      root_cause,
+        "root_cause": root_cause,
         "reasoning_trace": [f"[analysis] {root_cause[:120]}"],
     }
