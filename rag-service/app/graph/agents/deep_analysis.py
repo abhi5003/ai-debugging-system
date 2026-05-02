@@ -1,27 +1,7 @@
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.graph.state import AgentState
-from app.config import settings
-
-_llm = ChatAnthropic(
-    model=settings.llm_model,
-    api_key=settings.anthropic_api_key,
-    max_tokens=1200
-)
-
-_SYSTEM = """You are a senior SRE performing SECOND-PASS deep analysis.
-
-The first attempt had LOW confidence.
-
-You must:
-- Re-evaluate metrics, traces, topology
-- Generate 2–3 hypotheses
-- Choose the MOST LIKELY root cause
-- Explain why others are less likely
-
-Avoid repeating previous reasoning.
-Be precise and technical.
-"""
+from app.llm.factory import LLMFactory
+from app.graph.agent_config import DEEP_ANALYSIS_AGENT
 
 
 async def deep_analysis_agent(state: AgentState) -> dict:
@@ -43,8 +23,10 @@ Previous root cause:
 Re-analyze deeply.
 """
 
-    resp = await _llm.ainvoke([
-        SystemMessage(content=_SYSTEM),
+    resp = await LLMFactory.create_chat_llm(
+        max_tokens=DEEP_ANALYSIS_AGENT.max_tokens
+    ).ainvoke([
+        SystemMessage(content=DEEP_ANALYSIS_AGENT.system_prompt),
         HumanMessage(content=prompt)
     ])
 

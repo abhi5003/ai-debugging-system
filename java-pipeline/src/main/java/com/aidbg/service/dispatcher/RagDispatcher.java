@@ -4,37 +4,54 @@ import com.aidbg.model.EnrichedIncident;
 import com.aidbg.model.IncidentAnalysis;
 import com.aidbg.model.Severity;
 import com.aidbg.service.kafka.AnalysisKafkaProducer;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 
-import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
+/**
+ * Dispatches incidents to the RAG service based on severity.
+ *
+ * Uses a Spring-managed ThreadPoolTaskExecutor instead of raw
+ * Executors.newFixedThreadPool() to ensure proper lifecycle
+ * management and avoid thread leaks on context shutdown.
+ */
 @Component
 @Slf4j
 public class RagDispatcher {
 
-    private final WebClient              ragServiceClient;
+    private final RagAnalysisClient      ragClient;
     private final AnalysisKafkaProducer  analysisProducer;
-    private final LearningService        learningService;
-    private final ExecutorService        mediumPool =
-        Executors.newFixedThreadPool(4);
+    private final ThreadPoolTaskExecutor mediumPool;
     private final BlockingQueue<EnrichedIncident> lowSeverityQueue =
         new LinkedBlockingQueue<>(500);
 
     public RagDispatcher(
-            @Qualifier("ragServiceClient") WebClient ragServiceClient,
-            AnalysisKafkaProducer analysisProducer,
-            LearningService learningService) {
-        this.ragServiceClient  = ragServiceClient;
-        this.analysisProducer  = analysisProducer;
-        this.learningService   = learningService;
+            RagAnalysisClient ragClient,
+            AnalysisKafkaProducer analysisProducer) {
+        this.ragClient        = ragClient;
+        this.analysisProducer = analysisProducer;
+
+        this.mediumPool = new ThreadPoolTaskExecutor();
+        mediumPool.setCorePoolSize(4);
+        mediumPool.setMaxPoolSize(8);
+        mediumPool.setQueueCapacity(100);
+        mediumPool.setThreadNamePrefix("rag-medium-");
+        mediumPool.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        mediumPool.initialize();
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        mediumPool.shutdown();
     }
 
     public void dispatch(EnrichedIncident incident, Severity severity) {
@@ -43,52 +60,42 @@ public class RagDispatcher {
             case MEDIUM -> mediumPool.submit(() -> callRag(incident));
             case LOW    -> {
                 if (!lowSeverityQueue.offer(incident)) {
-                    log.warn("Low severity queue full — dropping {}", incident.getNumber());
+                    log.warn("Low severity queue full - dropping {}", incident.getNumber());
                 }
             }
         }
         log.info("Dispatched {} as {}", incident.getNumber(), severity);
     }
 
-    private void callRag(EnrichedIncident incident) {
-        try {
-            log.info("POST /analyze → rag-service  incident={}", incident.getNumber());
-    
-            IncidentAnalysis analysis = ragServiceClient.post()
-                .uri("/analyze")
-                .bodyValue(incident)
-                .retrieve()
-                .bodyToMono(IncidentAnalysis.class)
-                .timeout(Duration.ofSeconds(60))
-                .block();
-    
-            if (analysis == null) {
-                log.error("RAG returned null for {}", incident.getNumber());
-                return;
-            }
-    
-            log.info("RAG responded for {} confidence={}",
-                incident.getNumber(), analysis.getConfidence());
-    
-            // ✅ NEW: Mark as AI suggestion (VERY IMPORTANT)
-            analysis.setStatus("PENDING_APPROVAL");
-            analysis.setSource("AI");
-    
-            // ✅ Publish to Kafka (this will go to ServiceNow as suggestion)
-            analysisProducer.publish(analysis);
-    
-            // ❌ REMOVE THIS COMPLETELY
-            // learningService.store(analysis);
-    
-        } catch (WebClientResponseException e) {
-            log.error("RAG HTTP {} for {}: {}",
-                e.getStatusCode(), incident.getNumber(), e.getResponseBodyAsString());
-        } catch (Exception e) {
-            log.error("RAG call failed for {}: {}", incident.getNumber(), e.getMessage());
-        }
+    @CircuitBreaker(name = "ragService", fallbackMethod = "fallbackAnalyze")
+    void callRag(EnrichedIncident incident) {
+        IncidentAnalysis analysis = ragClient.analyze(incident);
+
+        analysis.setStatus("PENDING_APPROVAL");
+        analysis.setSource("AI");
+
+        analysisProducer.publish(analysis);
     }
 
-    
+    private void fallbackAnalyze(EnrichedIncident incident, Throwable t) {
+        log.error("Circuit breaker OPEN for {} — using fallback: {}",
+            incident.getNumber(), t.getMessage());
+
+        IncidentAnalysis fallback = IncidentAnalysis.builder()
+            .sysId(incident.getSysId())
+            .number(incident.getNumber())
+            .rootCause("Analysis unavailable — RAG service unreachable")
+            .resolution("Manual review required")
+            .immediateActions(List.of("Escalate to on-call engineer"))
+            .confidence(0.0)
+            .status("PENDING_APPROVAL")
+            .source("AI-FALLBACK")
+            .analyzedAt(Instant.now())
+            .build();
+
+        analysisProducer.publish(fallback);
+    }
+
     @Scheduled(fixedDelay = 120_000)
     public void drainLowSeverityQueue() {
         List<EnrichedIncident> batch = new ArrayList<>();

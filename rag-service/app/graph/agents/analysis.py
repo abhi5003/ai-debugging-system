@@ -1,42 +1,10 @@
 import logging
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.graph.state import AgentState
-from app.config import settings
+from app.llm.factory import LLMFactory
+from app.graph.agent_config import ANALYSIS_AGENT
 
 log = logging.getLogger(__name__)
-
-_llm = ChatAnthropic(
-    model=settings.llm_model,
-    api_key=settings.anthropic_api_key,
-    max_tokens=1024,
-)
-
-# 🔥 UPDATED SYSTEM PROMPT
-_SYSTEM = """You are a senior SRE performing incident root cause analysis.
-
-You receive:
-1. A current incident with live observability data (metrics, traces, topology)
-2. Similar past incidents (some HUMAN-verified, some AI-generated)
-
-STRICT RULES:
-- Always prioritize HUMAN-verified incidents over AI-generated ones
-- Use AI-generated incidents only if HUMAN data is insufficient
-- Higher confidence incidents are more reliable
-- Observability signals (metrics, traces, topology) must be the primary evidence
-- Do NOT blindly copy past incidents — validate against current signals
-
-Your task:
-Identify the single most likely ROOT CAUSE.
-
-Be precise:
-- Name the component
-- Describe the failure mode
-- Mention the key signal confirming it
-
-Respond with only the root cause in 1–2 sentences.
-No JSON. No explanation. No preamble.
-"""
 
 
 def _build_prompt(state: AgentState) -> str:
@@ -81,7 +49,6 @@ def _build_prompt(state: AgentState) -> str:
             f"Host group: {inc.topology.host_group or 'N/A'}",
         ]
 
-    # 🔥 UPDATED SIMILAR INCIDENTS BLOCK
     lines += ["", "=== SIMILAR RESOLVED INCIDENTS ==="]
 
     if similar:
@@ -100,7 +67,6 @@ def _build_prompt(state: AgentState) -> str:
     else:
         lines.append("No similar incidents found.")
 
-    # Web results (optional)
     if state.get("web_results"):
         lines += ["", "=== WEB SEARCH RESULTS ==="]
         for r in state["web_results"]:
@@ -118,8 +84,10 @@ def _build_prompt(state: AgentState) -> str:
 async def analysis_agent(state: AgentState) -> dict:
     prompt = _build_prompt(state)
 
-    response = await _llm.ainvoke([
-        SystemMessage(content=_SYSTEM),
+    response = await LLMFactory.create_chat_llm(
+        max_tokens=ANALYSIS_AGENT.max_tokens
+    ).ainvoke([
+        SystemMessage(content=ANALYSIS_AGENT.system_prompt),
         HumanMessage(content=prompt),
     ])
 

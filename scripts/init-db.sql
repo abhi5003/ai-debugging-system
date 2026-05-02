@@ -3,16 +3,22 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Incident embeddings table for RAG retrieval
 CREATE TABLE IF NOT EXISTS incident_embeddings (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    sys_id      VARCHAR(64) UNIQUE NOT NULL,
-    number      VARCHAR(32) NOT NULL,
-    description TEXT NOT NULL,
-    root_cause  TEXT,
-    resolution  TEXT,
-    priority    VARCHAR(16),
-    embedding   vector(1536),
-    resolved_at TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ DEFAULT now()
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sys_id           VARCHAR(64) UNIQUE NOT NULL,
+    number           VARCHAR(32) NOT NULL,
+    description      TEXT NOT NULL,
+    root_cause       TEXT,
+    resolution       TEXT,
+    priority         VARCHAR(16),
+    source           VARCHAR(16) DEFAULT 'AI',
+    confidence       DOUBLE PRECISION,
+    feedback_count   INTEGER DEFAULT 0,
+    acceptance_count INTEGER DEFAULT 0,
+    rejection_count  INTEGER DEFAULT 0,
+    embedding        vector(1536),
+    resolved_at      TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ DEFAULT now(),
+    configuration_item VARCHAR(128)
 );
 
 -- IVFFlat index for fast approximate nearest-neighbour search
@@ -20,6 +26,10 @@ CREATE INDEX IF NOT EXISTS incident_embeddings_idx
     ON incident_embeddings
     USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
+
+-- Composite index for metadata filtering
+CREATE INDEX IF NOT EXISTS idx_incident_embeddings_ci_priority
+    ON incident_embeddings (configuration_item, priority);
 
 -- Seed with sample resolved incidents for bootstrapping
 INSERT INTO incident_embeddings (sys_id, number, description, root_cause, resolution, priority)
@@ -48,7 +58,7 @@ VALUES
 (
     'seed-004', 'INC0000004',
     'High CPU usage on payment-service pods causing throttling',
-    'Memory leak in connection handler — connections not closed after timeout, GC pressure causing CPU spike.',
+    'Memory leak in connection handler -- connections not closed after timeout, GC pressure causing CPU spike.',
     'Rolling restart of payment-service pods. Deploy hotfix with proper connection cleanup in finally block.',
     'HIGH'
 ),

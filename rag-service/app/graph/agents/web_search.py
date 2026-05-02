@@ -1,42 +1,26 @@
+import asyncio
 from app.graph.state import AgentState
 from app.mcp.client import MCPClient
-import asyncio
+from app.mcp.filters import KeywordFilter
+from app.config import settings
 
-mcp = MCPClient()
-
-
-def filter_results(results, incident_text):
-    filtered = []
-
-    keywords = incident_text.lower().split()
-
-    for r in results:
-        title = r.get("title", "").lower()
-
-        # simple relevance check
-        if any(k in title for k in keywords):
-            filtered.append(r)
-
-    return filtered[:3]  # keep top 3 only
+mcp = MCPClient.get_instance()
+_filter = KeywordFilter()
 
 
 async def web_search_agent(state: AgentState) -> dict:
     inc = state["incident"]
 
-    # 🔥 Better query (more structured)
     query = f"{inc.short_description} error root cause fix troubleshooting"
 
     try:
-        # ✅ timeout protection
         results = await asyncio.wait_for(
             mcp.web_search(query),
-            timeout=8
+            timeout=settings.web_search_timeout,
         )
 
-        # ✅ filtering
-        filtered = filter_results(results, inc.short_description)
+        filtered = _filter.filter(results, inc.short_description)
 
-        # ⚠️ fallback if nothing useful
         if not filtered:
             return {
                 "web_results": [],
@@ -55,7 +39,6 @@ async def web_search_agent(state: AgentState) -> dict:
         }
 
     except Exception as e:
-        # ✅ never break pipeline
         return {
             "web_results": [],
             "web_search_done": True,

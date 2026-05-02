@@ -4,27 +4,39 @@ import com.aidbg.model.IncidentEvent;
 import com.aidbg.service.enrichment.EnrichmentService;
 import com.aidbg.service.kafka.IncidentKafkaProducer;
 import com.aidbg.service.validation.ValidationService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 @RestController
 @RequestMapping("/webhook")
-@RequiredArgsConstructor
 @Slf4j
 public class WebhookController {
 
     private final ValidationService     validationService;
     private final EnrichmentService     enrichmentService;
     private final IncidentKafkaProducer kafkaProducer;
+    private final Executor              webhookExecutor;
 
     @Value("${webhook.secret}")
     private String secret;
+
+    public WebhookController(
+            ValidationService validationService,
+            EnrichmentService enrichmentService,
+            IncidentKafkaProducer kafkaProducer,
+            @Qualifier("webhookPipelineExecutor") Executor webhookExecutor) {
+        this.validationService = validationService;
+        this.enrichmentService = enrichmentService;
+        this.kafkaProducer     = kafkaProducer;
+        this.webhookExecutor   = webhookExecutor;
+    }
 
     @PostMapping("/incident")
     public ResponseEntity<Void> receive(
@@ -38,7 +50,7 @@ public class WebhookController {
 
         log.info("Received incident webhook: {}", event.getNumber());
 
-        // Return 202 immediately — pipeline runs async
+        // Return 202 immediately — pipeline runs async on dedicated executor
         CompletableFuture.runAsync(() -> {
             try {
                 validationService.validate(event)
@@ -47,7 +59,7 @@ public class WebhookController {
             } catch (Exception e) {
                 log.error("Pipeline error for {}: {}", event.getNumber(), e.getMessage());
             }
-        });
+        }, webhookExecutor);
 
         return ResponseEntity.accepted().build();
     }

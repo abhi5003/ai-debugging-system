@@ -1,21 +1,23 @@
 package com.aidbg.service.processor;
 
+import com.aidbg.config.ScoringConfig;
 import com.aidbg.model.Severity;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+/**
+ * Routes a numeric score to a severity level using thresholds
+ * defined in ScoringConfig.
+ */
 @Component
+@RequiredArgsConstructor
 public class SeverityRouter {
 
-    @Value("${processor.score.critical-threshold:80}")
-    private int criticalThreshold;
-
-    @Value("${processor.score.high-threshold:50}")
-    private int highThreshold;
+    private final ScoringConfig config;
 
     public Severity route(int score) {
-        if (score >= criticalThreshold) return Severity.HIGH;
-        if (score >= highThreshold)     return Severity.MEDIUM;
+        if (score >= config.getCriticalThreshold()) return Severity.HIGH;
+        if (score >= config.getHighThreshold())     return Severity.MEDIUM;
         return Severity.LOW;
     }
 }

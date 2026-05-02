@@ -19,16 +19,21 @@ data:
   init.sql: |
     CREATE EXTENSION IF NOT EXISTS vector;
     CREATE TABLE IF NOT EXISTS incident_embeddings (
-        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        sys_id      VARCHAR(64) UNIQUE NOT NULL,
-        number      VARCHAR(32) NOT NULL,
-        description TEXT NOT NULL,
-        root_cause  TEXT,
-        resolution  TEXT,
-        priority    VARCHAR(16),
-        embedding   vector(1536),
-        resolved_at TIMESTAMPTZ,
-        created_at  TIMESTAMPTZ DEFAULT now()
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        sys_id           VARCHAR(64) UNIQUE NOT NULL,
+        number           VARCHAR(32) NOT NULL,
+        description      TEXT NOT NULL,
+        root_cause       TEXT,
+        resolution       TEXT,
+        priority         VARCHAR(16),
+        source           VARCHAR(16) DEFAULT 'AI',
+        confidence       DOUBLE PRECISION,
+        feedback_count   INTEGER DEFAULT 0,
+        acceptance_count INTEGER DEFAULT 0,
+        rejection_count  INTEGER DEFAULT 0,
+        embedding        vector(1536),
+        resolved_at      TIMESTAMPTZ,
+        created_at       TIMESTAMPTZ DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS incident_embeddings_idx
         ON incident_embeddings

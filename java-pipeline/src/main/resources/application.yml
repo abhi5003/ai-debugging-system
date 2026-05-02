@@ -47,6 +47,23 @@ management:
     web:
       exposure:
         include: health,info,metrics
+  health:
+    circuitbreakers:
+      enabled: true
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      ragService:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+        slowCallRateThreshold: 80
+        slowCallDurationThreshold: 45s
+        recordExceptions:
+          - com.aidbg.service.dispatcher.RagServiceException
+          - java.util.concurrent.TimeoutException
 
 kafka:
   topics:
@@ -54,7 +71,6 @@ kafka:
     incident-events-dlt: incident-events.DLT
     incident-analysis: incident-analysis
     incident-analysis-dlt: incident-analysis.DLT
-    incident-analysis: incident-analysis
     incident-feedback: incident-feedback
 
 webhook:
@@ -73,6 +89,8 @@ servicenow:
 rag:
   service:
     url: ${RAG_SERVICE_URL:http://localhost:8000}
+    analyze-timeout-seconds: 60
+    embed-timeout-seconds: 15
 
 processor:
   dedup-ttl-minutes: 10

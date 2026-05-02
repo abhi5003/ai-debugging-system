@@ -23,4 +23,5 @@ public class IncidentAnalysis {
     private Instant analyzedAt;
     private String status;
     private String source;
+    private String configurationItem;
 }

@@ -14,4 +14,6 @@ public class FeedbackEvent {
     private String finalResolution;
 
     private Double confidence;
+
+    private String configurationItem;
 }

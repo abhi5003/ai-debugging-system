@@ -1,29 +1,12 @@
-import json
 import logging
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.graph.state import AgentState
+from app.llm.factory import LLMFactory
 from app.config import settings
+from app.utils import parse_llm_json_response
+from app.graph.agent_config import CONFIDENCE_AGENT
 
 log = logging.getLogger(__name__)
-
-_llm = ChatAnthropic(
-    model=settings.llm_model,
-    api_key=settings.anthropic_api_key,
-    max_tokens=256,
-)
-
-_SYSTEM = """You are a quality evaluator for SRE incident analyses.
-Score the confidence that the root cause and resolution are correct (0.0 to 1.0).
-
-Consider:
-- Specificity of the root cause (vague = lower score)
-- Number and similarity of matching past incidents
-- Alignment between Dynatrace signals and the stated root cause
-- Actionability of the resolution steps
-
-Respond ONLY with valid JSON:
-{"confidence": 0.85, "reason": "one sentence explanation"}"""
 
 
 async def confidence_agent(state: AgentState) -> dict:
@@ -47,39 +30,32 @@ EVIDENCE:
 
 Score the confidence of this analysis."""
 
-    response = await _llm.ainvoke([
-        SystemMessage(content=_SYSTEM),
+    response = await LLMFactory.create_chat_llm(
+        max_tokens=CONFIDENCE_AGENT.max_tokens
+    ).ainvoke([
+        SystemMessage(content=CONFIDENCE_AGENT.system_prompt),
         HumanMessage(content=prompt),
     ])
 
-    raw = response.content.strip().replace("```json", "").replace("```", "").strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        log.warning("[confidence] JSON parse failed, defaulting to 0.5")
-        data = {"confidence": 0.5, "reason": "parse error"}
+    raw = response.content.strip()
+    data = parse_llm_json_response(raw, {"confidence": 0.5, "reason": "parse error"})
 
     confidence = float(data.get("confidence", 0.5))
     reason = data.get("reason", "")
 
-    # ✅ SIGNAL-BASED CALIBRATION
     similar_count = len(similar)
 
     adjustment = 0.0
 
-    # Boost if we have strong historical match
-    if similar_count >= 3:
-        adjustment += 0.10
+    if similar_count >= settings.confidence_boost_similar_count:
+        adjustment += settings.confidence_boost_amount
 
-    # Penalize if no similar incidents
     if similar_count == 0:
-        adjustment -= 0.15
+        adjustment -= settings.confidence_penalty_none
 
-    # Boost if strong runtime signal
-    if error_rate > 20:
-        adjustment += 0.05
+    if error_rate > settings.confidence_error_rate_threshold:
+        adjustment += settings.confidence_boost_error_amount
 
-    # Apply and clamp
     confidence = max(0.0, min(1.0, confidence + adjustment))
 
     needs_more = (

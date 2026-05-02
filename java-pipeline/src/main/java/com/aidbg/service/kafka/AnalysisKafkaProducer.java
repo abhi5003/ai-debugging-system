@@ -1,59 +1,58 @@
 package com.aidbg.service.kafka;
 
 import com.aidbg.model.IncidentAnalysis;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
+/**
+ * Kafka producer for incident analysis results.
+ * Extends AbstractKafkaProducer to reuse shared DLT and error handling.
+ */
 @Component
-@RequiredArgsConstructor
 @Slf4j
-public class AnalysisKafkaProducer {
+public class AnalysisKafkaProducer extends AbstractKafkaProducer<IncidentAnalysis> {
 
-    private final KafkaTemplate<String, byte[]> kafkaTemplate;
-    private final ObjectMapper objectMapper;
+    @Value("${kafka.topics.incident-analysis}")
+    private String topic;
 
-    @Value("${kafka.topics.incident-analysis}")      private String topic;
-    @Value("${kafka.topics.incident-analysis-dlt}")  private String dltTopic;
+    @Value("${kafka.topics.incident-analysis-dlt}")
+    private String dltTopic;
 
-    public void publish(IncidentAnalysis analysis) {
-        try {
-            byte[] payload = objectMapper.writeValueAsBytes(analysis);
-            ProducerRecord<String, byte[]> record =
-                new ProducerRecord<>(topic, analysis.getSysId(), payload);
-
-            record.headers()
-                .add("confidence",  String.valueOf(analysis.getConfidence()).getBytes())
-                .add("number",      analysis.getNumber().getBytes())
-                .add("analyzedAt",  analysis.getAnalyzedAt().toString().getBytes());
-
-            kafkaTemplate.send(record).whenComplete((result, ex) -> {
-                if (ex != null) {
-                    log.error("Analysis publish failed for {}: {}",
-                        analysis.getNumber(), ex.getMessage());
-                    sendToDlt(analysis.getSysId(), payload, ex.getMessage());
-                } else {
-                    log.info("Analysis published for {} confidence={} → partition={} offset={}",
-                        analysis.getNumber(), analysis.getConfidence(),
-                        result.getRecordMetadata().partition(),
-                        result.getRecordMetadata().offset());
-                }
-            });
-
-        } catch (JsonProcessingException e) {
-            log.error("Analysis serialization failed for {}: {}",
-                analysis.getNumber(), e.getMessage());
-        }
+    public AnalysisKafkaProducer(
+            KafkaTemplate<String, byte[]> kafkaTemplate,
+            ObjectMapper objectMapper) {
+        super(kafkaTemplate, objectMapper);
     }
 
-    private void sendToDlt(String key, byte[] payload, String reason) {
-        ProducerRecord<String, byte[]> dlt = new ProducerRecord<>(dltTopic, key, payload);
-        dlt.headers().add("failure-reason", reason.getBytes());
-        kafkaTemplate.send(dlt);
+    @Override
+    protected String getTopic(IncidentAnalysis item) {
+        return topic;
+    }
+
+    @Override
+    protected String getDltTopic() {
+        return dltTopic;
+    }
+
+    @Override
+    protected String getItemKey(IncidentAnalysis item) {
+        return item.getSysId();
+    }
+
+    @Override
+    protected String getItemNumber(IncidentAnalysis item) {
+        return item.getNumber();
+    }
+
+    @Override
+    protected void addCustomHeaders(ProducerRecord<String, byte[]> record, IncidentAnalysis item) {
+        record.headers()
+            .add("confidence", String.valueOf(item.getConfidence()).getBytes())
+            .add("number",     item.getNumber().getBytes())
+            .add("analyzedAt", item.getAnalyzedAt().toString().getBytes());
     }
 }

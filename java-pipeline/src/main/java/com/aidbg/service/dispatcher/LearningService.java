@@ -2,216 +2,152 @@ package com.aidbg.service.dispatcher;
 
 import com.aidbg.model.FeedbackEvent;
 import com.aidbg.model.IncidentAnalysis;
+import com.aidbg.service.learning.EmbeddingService;
+import com.aidbg.service.learning.LearningRepository;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Orchestration layer for the learning pipeline.
+ *
+ * Previously this class was a God Class handling embedding generation,
+ * SQL operations, feedback updates, and scheduled recalculations.
+ * Now it delegates to:
+ *   - EmbeddingService   (embedding generation + pgvector formatting)
+ *   - LearningRepository (all JDBC data access)
+ *
+ * The confidence threshold is now configurable via @Value, aligned
+ * with the Python RAG service's confidence_threshold.
+ */
 @Service
 @Slf4j
 public class LearningService {
 
-    private final WebClient ragServiceClient;
-    private final JdbcTemplate jdbcTemplate;
+    private final EmbeddingService   embeddingService;
+    private final LearningRepository learningRepository;
+
+    @Value("${learning.min-confidence:0.7}")
+    private double minConfidence;
 
     public LearningService(
-            @Qualifier("ragServiceClient") WebClient ragServiceClient,
-            JdbcTemplate jdbcTemplate) {
-        this.ragServiceClient = ragServiceClient;
-        this.jdbcTemplate = jdbcTemplate;
+            EmbeddingService embeddingService,
+            LearningRepository learningRepository) {
+        this.embeddingService   = embeddingService;
+        this.learningRepository = learningRepository;
     }
+
+    // ── Public API: store analysis embeddings ──────────────────────
 
     public void store(IncidentAnalysis analysis) {
-        try {
-            String text = buildLearningText(analysis);
+        List<Double> embedding = embeddingService.generateEmbedding(analysis);
+        if (embedding == null) return;
 
-            // Ask Python RAG service to embed the resolved incident
-            @SuppressWarnings("unchecked")
-            List<Double> embedding = ragServiceClient.post()
-                    .uri("/embed")
-                    .bodyValue(Map.of("text", text))
-                    .retrieve()
-                    .bodyToMono(List.class)
-                    .timeout(Duration.ofSeconds(15))
-                    .block();
-
-            if (embedding == null || embedding.isEmpty()) {
-                log.warn("Empty embedding for {}", analysis.getNumber());
-                return;
-            }
-
-            String pgVector = toPgVector(embedding);
-
-            jdbcTemplate.update("""
-                        INSERT INTO incident_embeddings
-                        (sys_id, number, description, root_cause, resolution,
-                         source, confidence,
-                         feedback_count, acceptance_count, rejection_count,
-                         embedding, resolved_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?::vector, now())
-                        ON CONFLICT (sys_id) DO UPDATE SET
-                            resolution = EXCLUDED.resolution,
-                            source = EXCLUDED.source,
-                            confidence = EXCLUDED.confidence,
-                            embedding = EXCLUDED.embedding
-                    """,
-                    analysis.getSysId(),
-                    analysis.getNumber(),
-                    text,
-                    analysis.getRootCause(),
-                    analysis.getResolution(),
-                    analysis.getSource(),
-                    analysis.getConfidence(),
-                    toPgVector(embedding));
-
-            log.info("Stored learning embedding for {}", analysis.getNumber());
-
-        } catch (Exception e) {
-            log.error("Learning store failed for {}: {}", analysis.getNumber(), e.getMessage());
-        }
+        learningRepository.upsertEmbedding(
+            analysis.getSysId(),
+            analysis.getNumber(),
+            buildLearningText(analysis),
+            analysis.getRootCause(),
+            analysis.getResolution(),
+            analysis.getSource(),
+            analysis.getConfidence(),
+            analysis.getConfigurationItem(),
+            embeddingService.toPgVector(embedding));
     }
 
-    private String buildLearningText(IncidentAnalysis analysis) {
-        return String.format(
-                "number: %s\nroot_cause: %s\nresolution: %s\nsimilar_incidents: %s",
-                analysis.getNumber(),
-                analysis.getRootCause(),
-                analysis.getResolution(),
-                String.join(", ", analysis.getSimilarIncidentNumbers() != null
-                        ? analysis.getSimilarIncidentNumbers()
-                        : List.of()));
-    }
-
-    private String toPgVector(List<Double> embedding) {
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < embedding.size(); i++) {
-            sb.append(embedding.get(i));
-            if (i < embedding.size() - 1)
-                sb.append(",");
-        }
-        return sb.append("]").toString();
-    }
+    // ── Public API: store from feedback events ─────────────────────
 
     public void storeAI(FeedbackEvent event) {
-
         IncidentAnalysis analysis = IncidentAnalysis.builder()
-                .sysId(event.getSysId())
-                .number(event.getIncidentNumber())
-                .rootCause(event.getRootCause())
-                .resolution(event.getFinalResolution())
-                .confidence(event.getConfidence())
-                .source("AI")
-                .build();
-
+            .sysId(event.getSysId())
+            .number(event.getIncidentNumber())
+            .rootCause(event.getRootCause())
+            .resolution(event.getFinalResolution())
+            .confidence(event.getConfidence())
+            .source("AI")
+            .configurationItem(event.getConfigurationItem())
+            .build();
         storeInternal(analysis);
     }
 
     public void storeHuman(FeedbackEvent event) {
-
         IncidentAnalysis analysis = IncidentAnalysis.builder()
-                .sysId(event.getSysId())
-                .number(event.getIncidentNumber())
-                .rootCause(event.getRootCause())
-                .resolution(event.getFinalResolution())
-                .confidence(1.0) // HUMAN = gold data
-                .source("HUMAN")
-                .build();
-
+            .sysId(event.getSysId())
+            .number(event.getIncidentNumber())
+            .rootCause(event.getRootCause())
+            .resolution(event.getFinalResolution())
+            .confidence(1.0)
+            .source("HUMAN")
+            .configurationItem(event.getConfigurationItem())
+            .build();
         storeInternal(analysis);
     }
 
-    private void storeInternal(IncidentAnalysis analysis) {
-
-        // ❌ skip low confidence ONLY for AI
-        if ("AI".equals(analysis.getSource()) &&
-                analysis.getConfidence() != (Double) null &&
-                analysis.getConfidence() < 0.7) {
-            return;
-        }
-
-        String text = buildLearningText(analysis);
-
-        List<Double> embedding = ragServiceClient.post()
-                .uri("/embed")
-                .bodyValue(Map.of("text", text))
-                .retrieve()
-                .bodyToMono(List.class)
-                .block();
-
-        if (embedding == null || embedding.isEmpty())
-            return;
-
-        jdbcTemplate.update("""
-                INSERT INTO incident_embeddings
-                (sys_id, number, description, root_cause, resolution, source, confidence, embedding, resolved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?::vector, now())
-                ON CONFLICT (sys_id) DO UPDATE SET
-                resolution = EXCLUDED.resolution,
-                source = EXCLUDED.source,
-                confidence = EXCLUDED.confidence,
-                embedding = EXCLUDED.embedding
-                """,
-                analysis.getSysId(),
-                analysis.getNumber(),
-                text,
-                analysis.getRootCause(),
-                analysis.getResolution(),
-                analysis.getSource(),
-                analysis.getConfidence(),
-                toPgVector(embedding));
-
-        log.info("Learning stored incident={} source={}",
-                analysis.getNumber(), analysis.getSource());
-    }
+    // ── Public API: feedback handling ──────────────────────────────
 
     public void updateFeedback(String sysId, boolean accepted) {
+        learningRepository.updateFeedback(sysId, accepted);
 
-        // 1. Update counts
-        if (accepted) {
-            jdbcTemplate.update("""
-                        UPDATE incident_embeddings
-                        SET feedback_count = feedback_count + 1,
-                            acceptance_count = acceptance_count + 1
-                        WHERE sys_id = ?
-                    """, sysId);
-        } else {
-            jdbcTemplate.update("""
-                        UPDATE incident_embeddings
-                        SET feedback_count = feedback_count + 1,
-                            rejection_count = rejection_count + 1
-                        WHERE sys_id = ?
-                    """, sysId);
-        }
-
-        // 2. Fetch updated counts
-        Map<String, Object> row = jdbcTemplate.queryForMap("""
-                    SELECT confidence, acceptance_count, rejection_count
-                    FROM incident_embeddings
-                    WHERE sys_id = ?
-                """, sysId);
-
+        Map<String, Object> row = learningRepository.getFeedbackStats(sysId);
         double baseConfidence = ((Number) row.get("confidence")).doubleValue();
         int acc = ((Number) row.get("acceptance_count")).intValue();
         int rej = ((Number) row.get("rejection_count")).intValue();
 
-        // 3. Calculate new confidence
         double newConfidence = calculateAdjustedConfidence(baseConfidence, acc, rej);
 
-        // 4. Update confidence
-        jdbcTemplate.update("""
-                    UPDATE incident_embeddings
-                    SET confidence = ?
-                    WHERE sys_id = ?
-                """, newConfidence, sysId);
+        learningRepository.updateConfidence(sysId, newConfidence);
 
         log.info("Feedback updated sysId={} accepted={} newConfidence={}",
-                sysId, accepted, newConfidence);
+            sysId, accepted, newConfidence);
+    }
+
+    // ── Scheduled tasks ────────────────────────────────────────────
+
+    @Scheduled(fixedRate = 300000)
+    public void recalculateConfidence() {
+        int updated = learningRepository.recalculateAllConfidence();
+        log.info("Recalculated confidence for {} records", updated);
+    }
+
+    // ── Internal helpers ───────────────────────────────────────────
+
+    private void storeInternal(IncidentAnalysis analysis) {
+        if ("AI".equals(analysis.getSource()) &&
+                analysis.getConfidence() < minConfidence) {
+            return;
+        }
+
+        List<Double> embedding = embeddingService.generateEmbedding(analysis);
+        if (embedding == null) return;
+
+        learningRepository.upsertEmbedding(
+            analysis.getSysId(),
+            analysis.getNumber(),
+            buildLearningText(analysis),
+            analysis.getRootCause(),
+            analysis.getResolution(),
+            analysis.getSource(),
+            analysis.getConfidence(),
+            analysis.getConfigurationItem(),
+            embeddingService.toPgVector(embedding));
+
+        log.info("Learning stored incident={} source={}",
+            analysis.getNumber(), analysis.getSource());
+    }
+
+    private String buildLearningText(IncidentAnalysis analysis) {
+        return String.format(
+            "number: %s\nroot_cause: %s\nresolution: %s\nsimilar_incidents: %s",
+            analysis.getNumber(),
+            analysis.getRootCause(),
+            analysis.getResolution(),
+            String.join(", ", analysis.getSimilarIncidentNumbers() != null
+                ? analysis.getSimilarIncidentNumbers()
+                : List.of()));
     }
 
     private double calculateAdjustedConfidence(
@@ -219,28 +155,9 @@ public class LearningService {
             int acceptanceCount,
             int rejectionCount) {
         int total = acceptanceCount + rejectionCount;
-
-        if (total == 0)
-            return baseConfidence;
+        if (total == 0) return baseConfidence;
 
         double successRate = (double) acceptanceCount / total;
-
         return (baseConfidence * 0.6) + (successRate * 0.4);
     }
-
-    @Scheduled(fixedRate = 300000) // every 5 minutes
-    public void recalculateConfidence() {
-
-        int updated = jdbcTemplate.update("""
-                    UPDATE incident_embeddings
-                    SET confidence =
-                        CASE
-                            WHEN feedback_count = 0 THEN confidence
-                            ELSE (acceptance_count::float / feedback_count)
-                        END
-                """);
-
-        log.info("Recalculated confidence for {} records", updated);
-    }
-
 }

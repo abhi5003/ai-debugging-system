@@ -1,6 +1,5 @@
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -9,8 +8,9 @@ from app.config import settings
 from app.models.incident import EnrichedIncident
 from app.models.analysis import IncidentAnalysis
 from app.graph.supervisor import rag_graph
-from app.graph.state import AgentState
-from langchain_openai import OpenAIEmbeddings
+from app.graph.state_factory import create_initial_state
+from app.llm.factory import LLMFactory
+from app.db import create_pool, close_pool
 from pydantic import BaseModel
 
 logging.basicConfig(
@@ -19,18 +19,17 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-_embeddings = OpenAIEmbeddings(
-    model=settings.embedding_model,
-    api_key=settings.openai_api_key,
-)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("RAG service starting — model=%s  embed=%s",
              settings.llm_model, settings.embedding_model)
-    yield
-    log.info("RAG service shutting down")
+    await create_pool()
+    try:
+        yield
+    finally:
+        await close_pool()
+        log.info("RAG service shutting down")
 
 
 app = FastAPI(
@@ -40,47 +39,14 @@ app = FastAPI(
 )
 
 
-# ── Main analysis endpoint ────────────────────────────────────────────────────
-
 @app.post("/analyze", response_model=IncidentAnalysis)
 async def analyze(incident: EnrichedIncident) -> IncidentAnalysis:
     log.info("Analyzing %s  priority=%s", incident.number, incident.priority)
 
     try:
-        initial: AgentState = {
-            "incident":           incident,
-            "embedding":          [],
-            "similar_incidents":  [],
-            "retrieval_attempts": 0,
-            "root_cause":         "",
-            "resolution":         "",
-            "immediate_actions":  [],
-            "confidence":         0.0,
-            "needs_reretrieval":  False,
-            "reasoning_trace":    [],
-            "deep_analysis_done": False,
-            "web_search_done":    False,
-            "web_results":        [],
-            "loop_count":         0,
-            "max_loops":          3,
-        }
-
+        initial = create_initial_state(incident)
         final = await rag_graph.ainvoke(initial)
-
-        result = IncidentAnalysis(
-            sys_id=incident.sys_id,
-            number=incident.number,
-            root_cause=final["root_cause"],
-            resolution=final["resolution"],
-            immediate_actions=final["immediate_actions"],
-            confidence=final["confidence"],
-            similar_incident_numbers=[
-                s["number"] for s in final["similar_incidents"]
-            ],
-            agent_reasoning_trace=final["reasoning_trace"],
-            retrieval_attempts=final["retrieval_attempts"],
-            analyzed_at=datetime.now(timezone.utc),
-        )
+        result = IncidentAnalysis.from_state(final, incident)
 
         log.info("Completed %s  confidence=%.2f  attempts=%d  similar=%d",
                  incident.number, result.confidence,
@@ -93,8 +59,6 @@ async def analyze(incident: EnrichedIncident) -> IncidentAnalysis:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Embedding endpoint (used by Java LearningService) ────────────────────────
-
 class EmbedRequest(BaseModel):
     text: str
 
@@ -102,13 +66,11 @@ class EmbedRequest(BaseModel):
 @app.post("/embed")
 async def embed(request: EmbedRequest) -> list[float]:
     try:
-        return await _embeddings.aembed_query(request.text)
+        return await LLMFactory.create_embeddings().aembed_query(request.text)
     except Exception as e:
         log.exception("Embed failed")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ── Health check ──────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
@@ -119,8 +81,6 @@ async def health():
         "embed":   settings.embedding_model,
     }
 
-
-# ── Global exception handler ──────────────────────────────────────────────────
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):

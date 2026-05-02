@@ -2,6 +2,7 @@ package com.aidbg.service.validation;
 
 import com.aidbg.model.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -11,14 +12,25 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
 public class ValidationService {
 
-    private static final Set<String> SKIP_PRIORITIES = Set.of("4", "5");
     private static final DateTimeFormatter SN_FMT =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /**
+     * Configurable set of priorities to skip.
+     * Previously hardcoded as Set.of("4", "5").
+     */
+    private Set<String> skipPriorities;
+
+    public ValidationService(
+            @Value("${validation.skip-priorities:4,5}") String skipPrioritiesCsv) {
+        this.skipPriorities = Set.of(skipPrioritiesCsv.split(","));
+    }
 
     public Optional<NormalizedIncident> validate(IncidentEvent raw) {
 
@@ -33,7 +45,7 @@ public class ValidationService {
         }
 
         // Stage 2 — business rule: skip low-priority
-        if (SKIP_PRIORITIES.contains(raw.getPriority())) {
+        if (skipPriorities.contains(raw.getPriority())) {
             log.info("Skipping {} — priority {} below threshold",
                 raw.getNumber(), raw.getPriority());
             return Optional.empty();
