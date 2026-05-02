@@ -4,6 +4,7 @@ from app.graph.state import AgentState
 from app.llm.factory import LLMFactory
 from app.graph.agent_config import RESOLUTION_AGENT
 from app.utils import parse_llm_json_response
+from app.prompts.registry import build_resolution_prompt
 
 log = logging.getLogger(__name__)
 
@@ -13,30 +14,7 @@ async def resolution_agent(state: AgentState) -> dict:
     root_cause = state["root_cause"]
     similar = state["similar_incidents"]
 
-    past = "\n".join([
-        f"- {s['number']}: {s.get('resolution', 'no resolution recorded')}"
-        for s in similar
-        if s.get("resolution")
-    ]) or "No past resolutions available."
-
-    downstream = (
-        inc.topology.downstream_services if inc.topology else []
-    )
-
-    prompt = f"""ROOT CAUSE:
-                 {root_cause}
-
-                  INCIDENT:
-                  Number:      {inc.number}
-                  CI:          {inc.configuration_item or 'N/A'}
-                  Priority:    {inc.priority}
-                  Error rate:  {inc.metrics.error_rate_percent:.1f}% (Dynatrace)
-                  Downstream services at risk: {downstream or 'none'}
-
-                  PAST RESOLUTIONS FOR SIMILAR INCIDENTS:
-                  {past}
-
-                  Generate the resolution plan and immediate actions."""
+    prompt = build_resolution_prompt(state)
 
     response = await LLMFactory.create_chat_llm(
         max_tokens=RESOLUTION_AGENT.max_tokens
